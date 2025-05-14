@@ -2,7 +2,10 @@ package gin_mcp
 
 import (
 	"context"
+	"fmt"
 	"net/http"
+
+	"slices"
 
 	"github.com/gin-gonic/gin"
 	"github.com/mark3labs/mcp-go/mcp"
@@ -11,14 +14,16 @@ import (
 
 // MCPHandler 是一个Gin中间件，用于集成MCP server
 type MCPHandler struct {
-	server     *server.MCPServer
-	sseServer  *server.SSEServer
-	basePath   string
-	sseRoute   string
-	msgRoute   string
-	contextFn  server.HTTPContextFunc
-	serverOpts []server.ServerOption
-	sseOpts    []server.SSEOption
+	server          *server.MCPServer
+	sseServer       *server.SSEServer
+	basePath        string
+	sseRoute        string
+	msgRoute        string
+	dynamicBasePath server.DynamicBasePathFunc
+	contextFn       server.HTTPContextFunc
+	serverOpts      []server.ServerOption
+	sseOpts         []server.SSEOption
+	baseURL         string
 }
 
 // MCPHandlerOption 是配置MCPHandler的函数选项
@@ -46,22 +51,34 @@ func NewMCPHandler(name, version string, opts ...MCPHandlerOption) *MCPHandler {
 
 // Register 注册MCP路由到Gin引擎
 func (h *MCPHandler) Register(r *gin.Engine) {
-	// 确保基础路径以/开头且不以/结尾
-	if h.basePath == "" {
-		h.basePath = "/"
-	} else if h.basePath[0] != '/' {
-		h.basePath = "/" + h.basePath
-	}
-	if h.basePath != "/" && h.basePath[len(h.basePath)-1] == '/' {
-		h.basePath = h.basePath[:len(h.basePath)-1]
+	// 创建SSE服务器选项
+	sseOpts := slices.Clone(h.sseOpts)
+
+	if h.dynamicBasePath != nil {
+		sseOpts = append(sseOpts, server.WithDynamicBasePath(h.dynamicBasePath))
+	} else {
+		basePath := h.basePath
+		if basePath == "" {
+			basePath = "/"
+		} else if basePath[0] != '/' {
+			basePath = "/" + basePath
+		}
+		if basePath != "/" && basePath[len(basePath)-1] == '/' {
+			basePath = basePath[:len(basePath)-1]
+		}
+		h.basePath = basePath
+		sseOpts = append(sseOpts, server.WithStaticBasePath(basePath))
 	}
 
-	// 创建SSE服务器
-	sseOpts := append(h.sseOpts,
-		server.WithStaticBasePath(h.basePath),
+	// 设置SSE和消息端点
+	sseOpts = append(sseOpts,
 		server.WithSSEEndpoint(h.sseRoute),
 		server.WithMessageEndpoint(h.msgRoute),
 	)
+
+	if h.baseURL != "" {
+		sseOpts = append(sseOpts, server.WithBaseURL(h.baseURL))
+	}
 
 	if h.contextFn != nil {
 		sseOpts = append(sseOpts, server.WithHTTPContextFunc(h.contextFn))
@@ -69,14 +86,23 @@ func (h *MCPHandler) Register(r *gin.Engine) {
 
 	h.sseServer = server.NewSSEServer(h.server, sseOpts...)
 
-	// 注册路由
-	r.GET(h.basePath+h.sseRoute, func(c *gin.Context) {
-		h.sseServer.ServeHTTP(c.Writer, c.Request)
-	})
+	if h.dynamicBasePath != nil {
+		r.GET(h.basePath+h.sseRoute, func(c *gin.Context) {
+			h.sseServer.SSEHandler().ServeHTTP(c.Writer, c.Request)
+		})
 
-	r.POST(h.basePath+h.msgRoute, func(c *gin.Context) {
-		h.sseServer.ServeHTTP(c.Writer, c.Request)
-	})
+		r.POST(h.basePath+h.msgRoute, func(c *gin.Context) {
+			h.sseServer.MessageHandler().ServeHTTP(c.Writer, c.Request)
+		})
+	} else {
+		r.GET(h.basePath+h.sseRoute, func(c *gin.Context) {
+			h.sseServer.ServeHTTP(c.Writer, c.Request)
+		})
+
+		r.POST(h.basePath+h.msgRoute, func(c *gin.Context) {
+			h.sseServer.ServeHTTP(c.Writer, c.Request)
+		})
+	}
 }
 
 // GetServer 返回底层的MCP服务器实例
@@ -89,10 +115,24 @@ func (h *MCPHandler) GetSSEServer() *server.SSEServer {
 	return h.sseServer
 }
 
+// WithBaseURL 设置基础URL
+func WithBaseURL(baseURL string) MCPHandlerOption {
+	return func(h *MCPHandler) {
+		h.baseURL = baseURL
+	}
+}
+
 // WithBasePath 设置MCP处理器的基础路径
 func WithBasePath(path string) MCPHandlerOption {
 	return func(h *MCPHandler) {
 		h.basePath = path
+	}
+}
+
+// WithDynamicBasePath 设置动态基础路径函数
+func WithDynamicBasePath(fn server.DynamicBasePathFunc) MCPHandlerOption {
+	return func(h *MCPHandler) {
+		h.dynamicBasePath = fn
 	}
 }
 
@@ -142,6 +182,21 @@ func WithAuth(authFn AuthHandlerFunc) MCPHandlerOption {
 				return ctx
 			}
 			return ctx
+		}
+	}
+}
+
+// WithGinParam 设置动态基础路径
+func WithGinParam(paramName string, pathFormat string) MCPHandlerOption {
+	return func(h *MCPHandler) {
+		h.dynamicBasePath = func(r *http.Request, sessionID string) string {
+			if gc, exists := r.Context().Value(gin.ContextKey).(*gin.Context); exists {
+				paramValue := gc.Param(paramName)
+				if paramValue != "" {
+					return fmt.Sprintf(pathFormat, paramValue)
+				}
+			}
+			return h.basePath
 		}
 	}
 }
