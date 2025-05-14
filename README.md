@@ -19,7 +19,7 @@ go get github.com/TIANLI0/gin-mcp
 
 ## 快速开始
 
-以下是一个简单的示例，展示如何在 Gin 应用程序中设置 MCP 服务器：
+以下是一个简单的示例，展示如何在 Gin 应用程序中设置 MCP Server：
 
 ```go
 package main
@@ -36,7 +36,6 @@ import (
 )
 
 func main() {
-    // 创建 Gin 引擎
     r := gin.Default()
 
     // 创建 MCP 处理器
@@ -47,7 +46,6 @@ func main() {
         ),
     )
 
-    // 添加一个示例工具
     mcpHandler.AddTool(
         mcp.NewTool("hello",
             mcp.WithDescription("向指定名称问好"),
@@ -62,7 +60,6 @@ func main() {
         },
     )
 
-    // 注册 MCP 路由到 Gin
     mcpHandler.Register(r)
 
     // 启动服务器
@@ -117,6 +114,6 @@ gin-mcp 提供多种配置选项：
 - `WithSSEOptions(opts...)`: 添加 SSE 服务器选项
 - `WithAuth(fn)`: 添加认证处理程序
 
-## 许可证
+## License
 
-MIT 许可证 - 详情请参阅 [LICENSE](LICENSE) 文件。
+MIT License - 详情请参阅 [LICENSE](LICENSE) 文件。
