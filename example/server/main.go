@@ -29,10 +29,7 @@ func main() {
 			mcp.WithString("name", mcp.Description("要问候的名称"), mcp.Required()),
 		),
 		func(ctx context.Context, request mcp.CallToolRequest) (*mcp.CallToolResult, error) {
-			name, ok := request.Params.Arguments["name"].(string)
-			if !ok {
-				return nil, fmt.Errorf("参数无效: 需要字符串类型的name参数")
-			}
+			name := request.GetString("name", "")
 			return mcp.NewToolResultText(fmt.Sprintf("你好, %s!", name)), nil
 		},
 	)
